@@ -50,11 +50,11 @@ def golden(n):
     proba = [x / s for x in series]
     return proba
 
-def stud_fate(quests, mj_stud, mj_prep):
+def asker(quests, mj_stud, mj_prep, prep_n, stud_n):
     result = 0
-    answers_prep = []
     fate_quests = random.sample(quests, 3)
     for quest in fate_quests:
+        answers_prep = []
         quest = quest.strip()
         words = quest.split()
         n = len(words)
@@ -73,13 +73,27 @@ def stud_fate(quests, mj_stud, mj_prep):
             words.pop(index)
             proba_prep.pop(index)
             redo = random.choice([True, False, False])
-            print(f"redo: {redo}")
-        print(f"stud: {answer_stud}, prepod: {answers_prep}")
+        print(f"Prepod: {prep_n}: {answers_prep}, Student: {stud_n}: {answer_stud},")
         if answer_stud in answers_prep:
-            result = 1
-        print(f"RESULT: {result}")
-        return result
+            result += 1
+
+    return result
         
+def stud_fate(result, prep_n, stud_n):
+    fate = 'unknown'
+    mood = random.choices(['bad', 'good', 'norm'], 
+                          weights = [1, 2, 5], k=1)[0]
+    if mood == 'bad':
+        fate = 'fail'
+    elif mood == 'good':
+        fate = 'pass'
+    elif mood == 'norm' and result >= 2:
+        fate = 'pass'
+    else:
+        fate = 'fail'
+    print (f"Prepod: {prep_n}, mood {mood}, Student {stud_n}, result: {result}, fate: {fate}")
+    return fate
+
 def exam_run(prep, studs, quests, lock, result, times):
   
     while True:
@@ -92,16 +106,14 @@ def exam_run(prep, studs, quests, lock, result, times):
 
         start_time = time.monotonic()
         pause_total = 0
-        
-        print(f"Prepod: {prep.name}, Stud: {stud.name}")
-
         exam_time = random.randint(len(prep.name)-1, len(prep.name)+1)                                      
         time.sleep(exam_time)
 
-        for i in range(3):
-            result = stud_fate(quests, prep.sex, stud.sex)
-            stud.results += result
-            print(f"Prep: {prep.name}, Stud: {stud.name}, result: {stud.results}")
+        result = asker(quests, prep.sex, stud.sex, prep.name, stud.name)
+        stud.results += result
+        
+        stud.passed = stud_fate(stud.results, prep.name, stud.name) != 'fail'
+        print(f"Prepod: {prep.name}, Student: {stud.name}, result: {stud.results}, passed: {stud.passed}")
         
         end_time = time.monotonic()
         times[prep.name] = times.get(prep.name, 0) + (end_time - start_time - pause_total)
