@@ -3,9 +3,10 @@ from multiprocessing import Process, Manager, Lock
 import time
 
 class Stud:
-    def __init__(self, name, sex, passed):
+    def __init__(self, name, sex, results, passed):
         self.name = name
         self.sex = sex
+        self.results = results
         self.passed = passed
 
     def sex_converter(self):
@@ -34,7 +35,7 @@ def importer():
             params = line.strip().split()
             if len(params) == 2:
                 name, sex = params
-                studs.append(Stud(name, sex, 1))
+                studs.append(Stud(name, sex, 0, None))
                             
     with open("questions.txt", "r", encoding="utf-8") as file:
         quests = file.readlines()
@@ -50,7 +51,8 @@ def golden(n):
     return proba
 
 def stud_fate(quests, mj_stud, mj_prep):
-    correct = None
+    result = 0
+    answers_prep = []
     fate_quests = random.sample(quests, 3)
     for quest in fate_quests:
         quest = quest.strip()
@@ -63,8 +65,20 @@ def stud_fate(quests, mj_stud, mj_prep):
         proba_prep = golden(n)
         if mj_prep != "m":
             proba_prep.reverse()
-        answer_prep = random.choices(words, weights = proba_prep, k=1)[0]
-        print(f"stud: {answer_stud}, prepod: {answer_prep}")
+        redo = True
+        while redo and words:
+            answer_prep = random.choices(words, weights = proba_prep, k=1)[0]
+            answers_prep.append(answer_prep)
+            index = words.index(answer_prep)
+            words.pop(index)
+            proba_prep.pop(index)
+            redo = random.choice([True, False, False])
+            print(f"redo: {redo}")
+        print(f"stud: {answer_stud}, prepod: {answers_prep}")
+        if answer_stud in answers_prep:
+            result = 1
+        print(f"RESULT: {result}")
+        return result
         
 def exam_run(prep, studs, quests, lock, result, times):
   
@@ -81,12 +95,13 @@ def exam_run(prep, studs, quests, lock, result, times):
         
         print(f"Prepod: {prep.name}, Stud: {stud.name}")
 
+        exam_time = random.randint(len(prep.name)-1, len(prep.name)+1)                                      
+        time.sleep(exam_time)
+
         for i in range(3):
-            exam_time = random.randint(len(prep.name)-1, len(prep.name)+1)
-            print(f"exam duration {exam_time} repeat: {i}")
-            time.sleep(exam_time)
-            print(f"Prep: {prep.name}, Stud: {stud.name}")
-            stud_fate(quests, prep.sex, stud.sex)
+            result = stud_fate(quests, prep.sex, stud.sex)
+            stud.results += result
+            print(f"Prep: {prep.name}, Stud: {stud.name}, result: {stud.results}")
         
         end_time = time.monotonic()
         times[prep.name] = times.get(prep.name, 0) + (end_time - start_time - pause_total)
