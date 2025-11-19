@@ -73,7 +73,7 @@ def asker(quests, mj_stud, mj_prep, prep_n, stud_n):
             words.pop(index)
             proba_prep.pop(index)
             redo = random.choice([True, False, False])
-        print(f"Prepod: {prep_n}: {answers_prep}, Student: {stud_n}: {answer_stud},")
+        print(f"Prepod: {prep_n}: {answers_prep}, Student: {stud_n}: {answer_stud}")
         if answer_stud in answers_prep:
             result += 1
 
@@ -94,7 +94,7 @@ def stud_fate(result, prep_n, stud_n):
     print (f"Prepod: {prep_n}, mood {mood}, Student {stud_n}, result: {result}, fate: {fate}")
     return fate
 
-def exam_run(prep, studs, quests, lock, result, times):
+def exam_run(prep, studs, quests, lock, passed, times):
   
     while True:
         lock.acquire()
@@ -106,7 +106,8 @@ def exam_run(prep, studs, quests, lock, result, times):
 
         start_time = time.monotonic()
         pause_total = 0
-        exam_time = random.randint(len(prep.name)-1, len(prep.name)+1)                                      
+        exam_time = 1
+        # exam_time = random.randint(len(prep.name)-1, len(prep.name)+1)                                      
         time.sleep(exam_time)
 
         result = asker(quests, prep.sex, stud.sex, prep.name, stud.name)
@@ -114,9 +115,10 @@ def exam_run(prep, studs, quests, lock, result, times):
         
         stud.passed = stud_fate(stud.results, prep.name, stud.name) != 'fail'
         print(f"Prepod: {prep.name}, Student: {stud.name}, result: {stud.results}, passed: {stud.passed}")
+        passed[stud.name] = stud.passed
         
         end_time = time.monotonic()
-        times[prep.name] = times.get(prep.name, 0) + (end_time - start_time - pause_total)
+        times[prep.name] = int(times.get(prep.name, 0) + (end_time - start_time - pause_total))
 
         time_now = time.monotonic()
         if time_now - start_time >= 30:
@@ -133,17 +135,28 @@ def exam_process():
     prepods, students, quests = importer()
     manager = Manager()
     studs = manager.list(students)
-    results = manager.dict()
+    passed = manager.dict()
     lock = manager.Lock()
     times = manager.dict()
     processes = []
     for prep in prepods:
-        p = Process(target=exam_run, args=(prep, studs, quests, lock, results, times))
+        p = Process(target=exam_run, args=(prep, studs, quests, lock, passed, times))
         processes.append(p)
         p.start()
 
     for p in processes:
         p.join()
+
+    for stud in students:
+        if stud.name in passed:
+            stud.passed = passed[stud.name]
+        else:
+            stud.passed = None
+
+    print("Итоговая статистика:")
+    for stud in students:
+        print(f"Name: {stud.name}, passed: {stud.passed}")
+    print("Время экзаменаторов:", dict(times))
 
 
 def main():
