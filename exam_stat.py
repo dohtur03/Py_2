@@ -13,9 +13,11 @@ class Stud:
         return "m" if self.sex == "М" else "j"
 
 class Prepod:
-    def __init__(self, name, sex):
+    def __init__(self, name, sex, time, kill):
         self.name = name
         self.sex = sex
+        self.time = time
+        self.kill = kill
 
     def sex_converter(self):
         return "m" if self.sex == "М" else "j"
@@ -25,9 +27,9 @@ def importer():
     with open("examiners.txt", "r", encoding="utf-8") as file:
         for line in file:
             params = line.strip().split()
-            if len(params) ==2:
+            if len(params) == 2:
                 name, sex = params
-                preps.append(Prepod(name, sex))
+                preps.append(Prepod(name, sex, 0, 0))
 
     studs = []
     with open("students.txt", "r", encoding="utf-8") as file:
@@ -94,7 +96,7 @@ def stud_fate(result, prep_n, stud_n):
     print (f"Prepod: {prep_n}, mood {mood}, Student {stud_n}, result: {result}, fate: {fate}")
     return fate
 
-def exam_run(prep, studs, quests, lock, passed, times):
+def exam_run(prep, studs, quests, lock, statistics):
   
     while True:
         lock.acquire()
@@ -113,12 +115,25 @@ def exam_run(prep, studs, quests, lock, passed, times):
         result = asker(quests, prep.sex, stud.sex, prep.name, stud.name)
         stud.results += result
         
-        stud.passed = stud_fate(stud.results, prep.name, stud.name) != 'fail'
+        passed = stud_fate(stud.results, prep.name, stud.name)
+        stud.passed = passed != 'fail'
+
         print(f"Prepod: {prep.name}, Student: {stud.name}, result: {stud.results}, passed: {stud.passed}")
-        passed[stud.name] = stud.passed
+
+        key_stud = f"stud_{stud.name}"
+        with lock:
+            stud_stat = statistics.get(key_stud, {})
+            stud_stat.update({'passed': stud.passed, 'results': stud.results})
+            statistics[key_stud] = stud_stat
         
+        key_prep = f"prep_{prep.name}"
         end_time = time.monotonic()
-        times[prep.name] = int(times.get(prep.name, 0) + (end_time - start_time - pause_total))
+        with lock:
+            prep_stat = statistics.get(key_prep, {})
+            prep_stat['time'] = int(prep_stat.get('time', 0) + (end_time - start_time - pause_total))
+            if passed == 'fail':
+                prep_stat['kill'] = prep_stat.get('kill', 0) + 1
+            statistics[key_prep] = prep_stat
 
         time_now = time.monotonic()
         if time_now - start_time >= 30:
@@ -135,12 +150,11 @@ def exam_process():
     prepods, students, quests = importer()
     manager = Manager()
     studs = manager.list(students)
-    passed = manager.dict()
+    statistics = manager.dict()
     lock = manager.Lock()
-    times = manager.dict()
     processes = []
     for prep in prepods:
-        p = Process(target=exam_run, args=(prep, studs, quests, lock, passed, times))
+        p = Process(target=exam_run, args=(prep, studs, quests, lock, statistics))
         processes.append(p)
         p.start()
 
@@ -148,15 +162,20 @@ def exam_process():
         p.join()
 
     for stud in students:
-        if stud.name in passed:
-            stud.passed = passed[stud.name]
-        else:
-            stud.passed = None
+        stud_stat = statistics.get(f"stud_{stud.name}", {})
+        stud.passed = stud_stat.get("passed", None)
+        stud.results = stud_stat.get("results", 0)
+
+    for prep in prepods:
+        prep_stat = statistics.get(f"prep_{prep.name}", {})
+        prep.time = prep_stat.get("time", 0)
+        prep.kill = prep_stat.get("kill", 0)
 
     print("Итоговая статистика:")
     for stud in students:
         print(f"Name: {stud.name}, passed: {stud.passed}")
-    print("Время экзаменаторов:", dict(times))
+    for prep in prepods:
+        print(f"Name: {prep.name}, time: {prep.time}, killed: {prep.kill}")
 
 
 def main():
