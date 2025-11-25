@@ -3,6 +3,7 @@ from multiprocessing import Process, Manager, Lock
 import time
 from rich.live import Live
 from rich.table import Table
+from rich.console import Group
 
 class Stud:
     def __init__(self, name, sex, results, passed):
@@ -15,7 +16,7 @@ class Stud:
         return "m" if self.sex == "М" else "j"
 
 class Prepod:
-    def __init__(self, name, sex, time, kill):
+    def __init__(self, name, sex, time=0, kill=0):
         self.name = name
         self.sex = sex
         self.time = time
@@ -24,8 +25,15 @@ class Prepod:
     def sex_converter(self):
         return "m" if self.sex == "М" else "j"
 
+class Quests:
+	def __init__(self, text):
+		self.text = text
+
+	def worder(self):
+		return self.text.split()
+
 def importer():
-    preps = []    
+    preps = []
     with open("examiners.txt", "r", encoding="utf-8") as file:
         for line in file:
             params = line.strip().split()
@@ -40,11 +48,13 @@ def importer():
             if len(params) == 2:
                 name, sex = params
                 studs.append(Stud(name, sex, 0, None))
-                            
+                
+    questions = []
     with open("questions.txt", "r", encoding="utf-8") as file:
-        quests = file.readlines()
-  
-    return preps, studs, quests
+        for line in file:
+            questions.append(Quests(line.strip()))
+
+    return preps, studs, questions
 
 def table_studs(studs, statistics):
     table = Table()
@@ -56,6 +66,25 @@ def table_studs(studs, statistics):
         status_txt = "Сдал" if status else "Провалил" if status is not None else "Очередь"
         table.add_row(stud.name, status_txt)
     return table
+
+def table_prepos(preps, statistics):
+	table = Table()
+	table.add_column("Экзаменатор", justify="left")
+	table.add_column("Текущий студент", justify="left")
+	table.add_column("Всего студентов", justify="center")
+	table.add_column("Завалил", justify="center")
+	table.add_column("Время работы", justify="center")
+	for prep in preps:
+		current_stud = statistics.get(f"current_stud_{prep.name}", "-")
+		total_stud = statistics.get(f"total_stud_{prep.name}", 0)
+		prep_stat = statistics.get(f"prep_{prep.name}", {})
+		kill = prep_stat.get("kill", 0)
+		time_work = prep_stat.get("time", 0)
+
+		table.add_row(prep.name, current_stud, str(total_stud), str(kill), str(time_work))
+	return table
+
+
 
 def sort_status(stud, statistics):
     stud_stat = statistics.get(f"stud_{stud.name}", {})
@@ -77,8 +106,7 @@ def asker(quests, mj_stud, mj_prep, prep_n, stud_n):
     fate_quests = random.sample(quests, 3)
     for quest in fate_quests:
         answers_prep = []
-        quest = quest.strip()
-        words = quest.split()
+        words = quest.worder()
         n = len(words)
         proba_stud = golden(n)
         if mj_stud != "m":
@@ -115,24 +143,27 @@ def stud_fate(result, prep_n, stud_n):
     return fate
 
 def exam_run(prep, studs, quests, lock, statistics):
-  
     while True:
         lock.acquire()
         if not studs:
+            # No students left: clear current student for this prep
+            statistics.pop(f"current_stud_{prep.name}", None)
             lock.release()
             break
         stud = studs.pop(0)
+        # Update current student for the prep while holding the lock
+        statistics[f"current_stud_{prep.name}"] = stud.name  
         lock.release()
 
         start_time = time.monotonic()
         pause_total = 0
-        # exam_time = 1
-        exam_time = random.randint(len(prep.name)-1, len(prep.name)+1)                                      
+
+        exam_time = random.randint(len(prep.name)-1, len(prep.name)+1)
         time.sleep(exam_time)
 
         result = asker(quests, prep.sex, stud.sex, prep.name, stud.name)
         stud.results += result
-        
+
         passed = stud_fate(stud.results, prep.name, stud.name)
         stud.passed = passed != 'fail'
 
@@ -141,7 +172,10 @@ def exam_run(prep, studs, quests, lock, statistics):
             stud_stat = statistics.get(key_stud, {})
             stud_stat.update({'passed': stud.passed, 'results': stud.results})
             statistics[key_stud] = stud_stat
-        
+
+            total = statistics.get(f"total_stud_{prep.name}", 0)
+            statistics[f"total_stud_{prep.name}"] = total + 1
+
         key_prep = f"prep_{prep.name}"
         end_time = time.monotonic()
         with lock:
@@ -153,14 +187,18 @@ def exam_run(prep, studs, quests, lock, statistics):
 
         time_now = time.monotonic()
         if time_now - start_time >= 30:
+            with lock:
+                statistics.pop(f"current_stud_{prep.name}", None)  # Clear current student during pause
+                
             pause_start = time.monotonic()
             pause_time = random.randint(12, 18)
-            print(f"gehen wir nach hause es verboten ... pause time: {pause_time}, Prep: {prep}")
+            print(f"Pause time: {pause_time}s, Prep: {prep.name}")
             time.sleep(pause_time)
             pause_end = time.monotonic()
             pause_duration = pause_end - pause_start
             pause_total += pause_duration
             start_time = time.monotonic()
+
 
 def exam_process():
     prepods, students, quests = importer()
@@ -169,39 +207,38 @@ def exam_process():
     statistics = manager.dict()
     lock = manager.Lock()
     processes = []
+
     for prep in prepods:
         p = Process(target=exam_run, args=(prep, studs, quests, lock, statistics))
         processes.append(p)
         p.start()
 
-    sorted_studs = sorted(students, key=lambda stud: sort_status(stud, statistics))
-
-    with Live(table_studs(sorted_studs, statistics), refresh_per_second=2) as live:
+    with Live(refresh_per_second=2) as live:
         while any(p.is_alive() for p in processes):
             time.sleep(0.5)
             sorted_studs = sorted(students, key=lambda stud: sort_status(stud, statistics))
-            live.update(table_studs(sorted_studs, statistics))
+            sorted_preps = sorted(prepods, key=lambda prep: sort_status(prep, statistics))
+
+            students_table = table_studs(sorted_studs, statistics)
+            preps_table = table_prepos(sorted_preps, statistics)
+
+            combined = Group(
+                students_table,
+                preps_table
+            )
+            live.update(combined)
+
         for p in processes:
-           p.join()
+            p.join()
+
+        # Final update after all processes finish
         sorted_studs = sorted(students, key=lambda stud: sort_status(stud, statistics))
-        live.update(table_studs(sorted_studs, statistics))
-
-    for stud in students:
-        stud_stat = statistics.get(f"stud_{stud.name}", {})
-        stud.passed = stud_stat.get("passed", None)
-        stud.results = stud_stat.get("results", 0)
-
-    for prep in prepods:
-        prep_stat = statistics.get(f"prep_{prep.name}", {})
-        prep.time = prep_stat.get("time", 0)
-        prep.kill = prep_stat.get("kill", 0)
-
-    print("Итоговая статистика:")
-    for stud in students:
-        print(f"Name: {stud.name}, passed: {stud.passed}")
-    for prep in prepods:
-        print(f"Name: {prep.name}, time: {prep.time}, killed: {prep.kill}")
-
+        sorted_preps = sorted(prepods, key=lambda prep: sort_status(prep, statistics))
+        combined = Group(
+            table_studs(sorted_studs, statistics),
+            table_prepos(sorted_preps, statistics)
+        )
+        live.update(combined)
 
 def main():
     preps, studs, quests = importer()
