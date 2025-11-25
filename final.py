@@ -7,27 +7,29 @@ from rich.console import Group
 
 class Stud:
     def __init__(self, name, sex, results, passed):
-        self.name = name
-        self.sex = sex
-        self.results = results
-        self.passed = passed
+		self.name = name
+		self.sex = sex
+		self.results = results
+		self.passed = passed
+		self.time = time
 
-    def sex_converter(self):
+	def sex_converter(self):
         return "m" if self.sex == "М" else "j"
 
 class Prepod:
     def __init__(self, name, sex, time=0, kill=0):
-        self.name = name
-        self.sex = sex
-        self.time = time
-        self.kill = kill
+		self.name = name
+		self.sex = sex
+		self.time = time
+		self.kill = kill
 
     def sex_converter(self):
         return "m" if self.sex == "М" else "j"
 
 class Quests:
-	def __init__(self, text):
+	def __init__(self, text, passed):
 		self.text = text
+		self.passed = passed
 
 	def worder(self):
 		return self.text.split()
@@ -47,12 +49,12 @@ def importer():
             params = line.strip().split()
             if len(params) == 2:
                 name, sex = params
-                studs.append(Stud(name, sex, 0, None))
+                studs.append(Stud(name, sex, 0, None, 0))
                 
     questions = []
     with open("questions.txt", "r", encoding="utf-8") as file:
         for line in file:
-            questions.append(Quests(line.strip()))
+            questions.append(Quests(line.strip(), 0))
 
     return preps, studs, questions
 
@@ -83,8 +85,6 @@ def table_prepos(preps, statistics):
 
 		table.add_row(prep.name, current_stud, str(total_stud), str(kill), str(time_work))
 	return table
-
-
 
 def sort_status(stud, statistics):
     stud_stat = statistics.get(f"stud_{stud.name}", {})
@@ -165,12 +165,12 @@ def exam_run(prep, studs, quests, lock, statistics):
         stud.results += result
 
         passed = stud_fate(stud.results, prep.name, stud.name)
-        stud.passed = passed != 'fail'
+        stud.passed = passed != 'fail'	
 
         key_stud = f"stud_{stud.name}"
         with lock:
             stud_stat = statistics.get(key_stud, {})
-            stud_stat.update({'passed': stud.passed, 'results': stud.results})
+            stud_stat.update({'passed': stud.passed, 'results': stud.results, 'time': stud.time})
             statistics[key_stud] = stud_stat
 
             total = statistics.get(f"total_stud_{prep.name}", 0)
@@ -239,6 +239,9 @@ def exam_process():
             table_prepos(sorted_preps, statistics)
         )
         live.update(combined)
+		stud_time = [time for time in sorted_studs.values() if time > 0]
+		min_time = min(stud_time)
+		print(f"{stud.name}, {min_time}")
 
 def main():
     preps, studs, quests = importer()
