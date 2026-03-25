@@ -20,8 +20,6 @@ class Stud:
 
     def sex_converter(self):
         return "m" if self.sex == "М" else "f"
-
-
 class Prepod:
     def __init__(self, name, sex, time=0, kill=0):
         self.name = name
@@ -31,7 +29,6 @@ class Prepod:
 
     def sex_converter(self):
         return "m" if self.sex == "М" else "f"
-
 
 class Quests:
     def __init__(self, text, passed):
@@ -126,7 +123,7 @@ def golden(n):
     return proba
 
 
-def asker(quests, mj_stud, mj_prep, prep_n, stud_n):
+def asker(quests, mj_stud, mj_prep, prep_n, stud_n, question_stats=None):
     result = 0
     fate_quests = random.sample(quests, 3)
     for quest in fate_quests:
@@ -150,6 +147,8 @@ def asker(quests, mj_stud, mj_prep, prep_n, stud_n):
             redo = random.choice([True, False, False])
         if answer_stud in answers_prep:
             result += 1
+            if question_stats is not None:
+                question_stats[quest.text] = question_stats.get(quest.text, 0) + 1
 
     return result
 
@@ -164,22 +163,17 @@ def stud_fate(result, prep_n, stud_n):
         return "pass" if result >= 2 else "fail"
 
 
-def exam_run(prep, studs, quests, lock, statistics):
-    print(f"DEBUG: {prep.name} started", file=sys.stderr)  # ДОБАВИТЬ
-    
+def exam_run(prep, studs, quests, lock, statistics, question_stats):  # ДОБАВИТЬ question_stats
     while True:
         lock.acquire()
         if not studs:
             statistics.pop(f"current_stud_{prep.name}", None)
             lock.release()
-            print(f"DEBUG: {prep.name} finished - no students", file=sys.stderr)  # ДОБАВИТЬ
             break
         
         stud = studs.pop(0)
         statistics[f"current_stud_{prep.name}"] = stud.name
         lock.release()
-        
-        print(f"DEBUG: {prep.name} examining {stud.name}", file=sys.stderr)  # ДОБАВИТЬ
         
         # Record student start time
         student_start_time = time.monotonic()
@@ -196,7 +190,8 @@ def exam_run(prep, studs, quests, lock, statistics):
             prep.sex_converter(),
             stud.sex_converter(),
             prep.name,
-            stud.name
+            stud.name,
+            question_stats  # 🔥 ПЕРЕДАЕМ question_stats
         )
         stud.results += result
         
@@ -249,27 +244,26 @@ def exam_process():
     manager = Manager()
     studs = manager.list(students)
     statistics = manager.dict()
+    question_stats = manager.dict()
     lock = manager.Lock()
     processes = []
 
+    for quest in quests:
+        question_stats[quest.text] = 0
+
     for prep in prepods:
-        p = Process(target=exam_run, args=(prep, studs, quests, lock, statistics))
+        p = Process(target=exam_run, args=(prep, studs, quests, lock, statistics, question_stats))  # ДОБАВИТЬ question_stats
         processes.append(p)
         p.start()
 
-    # Даем процессам время запуститься
     time.sleep(0.2)
     
     try:
         while any(p.is_alive() for p in processes):
             time.sleep(0.5)
             
-            # Очистка экрана и перемещение курсора в начало
-            os.system('cls' if os.name == 'nt' else 'clear')
-            
-            # 🔥 ВАЖНО: перемещаем курсор в верхний левый угол 🔥
-            # Это работает в большинстве терминалов
-            sys.stdout.write('\033[H')
+            # Очистка экрана
+            sys.stdout.write('\033[2J\033[H')
             sys.stdout.flush()
             
             remaining = sum(1 for stud in students 
@@ -279,14 +273,13 @@ def exam_process():
             
             sorted_studs = sorted(students, key=lambda stud: sort_status(stud, statistics))
             sorted_preps = prepods
-            
-            # Теперь печатаем с самого верха
 
             print()
             print(table_studs(sorted_studs, statistics))
             print()
             print(table_prepos(sorted_preps, statistics, show_current=True))
             print()
+            print(f"Осталось в очереди: {remaining}")
             print(f"Время с момента начала экзамена: {elapsed} сек")
             
             sys.stdout.flush()
@@ -297,14 +290,18 @@ def exam_process():
     
     for p in processes:
         p.join()
-    time.sleep(0.2)
     
     # Final output
-    os.system('cls' if os.name == 'nt' else 'clear')
-    time.sleep(0.1)
+    sys.stdout.write('\033[2J\033[H')
+    sys.stdout.flush()
     total_time = int(time.time() - start_time_total)
     
-    # Final students table (passed/failed only)
+    print("=" * 80)
+    print(f"ИТОГИ ЭКЗАМЕНА | Общее время: {total_time} сек")
+    print("=" * 80)
+    print()
+    
+    # Final students table
     final_studs = []
     for stud in students:
         stat = statistics.get(f"stud_{stud.name}", {})
@@ -312,23 +309,21 @@ def exam_process():
         if passed is not None:
             final_studs.append((stud.name, passed, stat.get("time", 999999)))
     
-    # Sort: passed first, then failed
     final_studs.sort(key=lambda x: (not x[1], x[2]))
     
     table_final = PrettyTable()
     table_final.field_names = ["Студент", "Статус"]
     for name, passed, _ in final_studs:
         table_final.add_row([name, "Сдал" if passed else "Провалил"])
-    print()
     print(table_final)
     print()
     
-    # Final examiners table (4 columns)
+    # Final examiners table
     print(table_prepos(prepods, statistics, show_current=False))
     print()
     
-    print(f"Время с момента начала экзамена и до момента и его завершения: {elapsed} сек")
-    # Best students (fastest to pass)
+    print(f"Время с момента начала экзамена и до момента и его завершения: {total_time}")
+    # Best students
     passed_studs = [(name, time) for name, passed, time in final_studs if passed]
     if passed_studs:
         min_time = min(t for _, t in passed_studs)
@@ -337,7 +332,7 @@ def exam_process():
     else:
         print("Имена лучших студентов: нет")
     
-    # Best examiners (lowest fail percentage)
+    # Best examiners
     prep_stats = []
     for prep in prepods:
         total = statistics.get(f"total_stud_{prep.name}", 0)
@@ -353,7 +348,7 @@ def exam_process():
     else:
         print("Имена лучших экзаменаторов: нет")
     
-    # Students to expel (failed and finished earlier than other failed)
+    # Students to expel
     failed_studs = [(name, time) for name, passed, time in final_studs if not passed]
     if failed_studs:
         min_fail_time = min(t for _, t in failed_studs)
@@ -362,17 +357,22 @@ def exam_process():
     else:
         print("Имена студентов, которых после экзамена отчислят: нет")
     
-    # Best questions (most correct answers)
-    # Track question stats
-    question_stats = {}
-    for quest in quests:
-        question_stats[quest.text] = 0
-    
-    for stud in students:
-        stud_stat = statistics.get(f"stud_{stud.name}", {})
-        # This part would need additional tracking in exam_run
-        # For now, placeholder
-    print("Лучшие вопросы: (требуется дополнительное логирование)")
+    if question_stats:
+        # Преобразуем в обычный словарь для сортировки
+        q_stats = dict(question_stats)
+        if q_stats:
+            max_correct = max(q_stats.values())
+            if max_correct > 0:
+                best_questions = [q for q, count in q_stats.items() if count == max_correct]
+                # Обрезаем длинные вопросы для вывода
+                best_questions_short = [q[:50] + "..." if len(q) > 50 else q for q in best_questions]
+                print(f"Лучшие вопросы: {', '.join(best_questions_short)}")
+            else:
+                print("Лучшие вопросы: нет (никто не ответил правильно)")
+        else:
+            print("Лучшие вопросы: нет")
+    else:
+        print("Лучшие вопросы: нет")
     
     # Exam success
     total_passed = sum(1 for _, passed, _ in final_studs if passed)
@@ -380,7 +380,8 @@ def exam_process():
     if total_students > 0:
         success_rate = total_passed / total_students * 100
         print(f"Вывод: экзамен {'удался' if success_rate > 85 else 'не удался'}")
-
+    
+    sys.stdout.flush()
 
 if __name__ == "__main__":
     exam_process()
